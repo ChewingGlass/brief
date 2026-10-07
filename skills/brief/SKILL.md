@@ -16,7 +16,10 @@ findings land in the same file when they are ready.
 - `target` is a PR number, a PR URL, or a branch name. A branch with no PR still works, but the
   comment option in Phase 6 is then unavailable.
 - No `target` means local mode: the current checkout, compared from its merge base with the
-  remote default branch, such as `origin/main`, to the working tree. Uncommitted edits count. See "Local mode" in Phase 1.
+  remote default branch, such as `origin/main`, to the working tree. Uncommitted edits and new
+  untracked files count. See "Local mode" in Phase 1.
+- A `target` that is a directory, or a branch with no PR that a worktree has checked out, means
+  local mode in that worktree. This is the way to review an agent's work in another worktree.
 - `--effort` goes to `/code-review`. The default is `high`.
 - `--no-review` skips the background review. Phases 2 and 5 do not run, and Phase 6 works from
   the human's findings alone. Words like "no review" or "without Claude" in the request mean the
@@ -42,6 +45,10 @@ Keep a state file at `<scratchpad>/brief-<name>.md` with the worktree path, the 
 review agent's id, and the findings. A context compaction then loses nothing.
 
 ## Phase 1: Check out the PR
+
+Pick the mode first. No target, or a target that is a directory, means local mode. For a branch
+name, look for a worktree that has it checked out in `git worktree list --porcelain`. When `gh pr
+view` finds no PR for that branch, use local mode in that worktree. Otherwise continue below.
 
 ```bash
 gh pr view <target> --json number,title,url,headRefName,baseRefName,headRepositoryOwner,isCrossRepository,additions,deletions,changedFiles
@@ -97,23 +104,22 @@ changes against the PR head:
 git reset --mixed "$HEAD_SHA" && git checkout <headRefName>
 ```
 
-**Local mode.** With no target, work in the current checkout. Create no worktree, and never use
-diff mode, because the index there holds the human's work. Compare against the remote default
-branch:
+**Local mode.** Work in the checkout as it is. Create no worktree, and never use diff mode,
+because the index there holds the human's work. Local mode moves neither HEAD nor the index, so
+there is nothing to restore when the review ends. Compare against the remote default branch:
 
 ```bash
-WT=$(git rev-parse --show-toplevel)
+WT=$(git rev-parse --show-toplevel)     # or the target worktree
 DEFAULT=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)
 git fetch origin "${DEFAULT#origin/}"
 MB=$(git merge-base "$DEFAULT" HEAD)
-git ls-files --others --exclude-standard
+HEAD_SHA=$(python3 <skill dir>/scripts/brief.py snapshot)
 ```
 
-Run the exclude step above in local mode too.
-
-Pass `--base "$MB"` and no `--head` to `brief.py`, so the diff runs to the working tree. Untracked
-files are absent from `git diff`. Name each one in the hand-off, so the human knows the brief
-does not show it. Phase 6 has no comment option, and Phase 7 commits on the current branch.
+Run the exclude step above first, so the snapshot leaves out the brief files. `snapshot` commits
+the whole working tree, untracked files included, through a copy of the index. The real index and
+the files do not change. Use `HEAD_SHA` as the head of every diff, the same as in PR mode, so new
+files show as added. Phase 6 has no comment option.
 
 **Next round.** If `$WT/<name>.brief.json` exists, this run is the next round of the same
 review. Read its `round` and `snapshot`. The human re-runs `/brief` after another agent or they
@@ -122,11 +128,9 @@ date first:
 
 - PR mode: leave diff mode, run `git pull --ff-only`, record the new `HEAD_SHA`, and enter diff
   mode again.
-- Local mode: change nothing.
+- Local mode: take a new snapshot with `brief.py snapshot`.
 
-The new snapshot is the state this round reviews. In PR mode it is `HEAD_SHA`. In local mode it is
-`git stash create`, which writes a commit of the working tree without changing the tree or the
-index. Use `HEAD` when that command prints nothing. If the new snapshot has no diff against the
+The new snapshot is the state this round reviews, and it becomes `HEAD_SHA`. If the new snapshot has no diff against the
 last one, tell the human that nothing changed since round N, and stop.
 
 ## Phase 2: Start the review in the background
@@ -253,7 +257,7 @@ replaces that line.
 The extension watches the brief file. A new round opens its diff of the changes since the last
 round in the open window, with no reload.
 
-In local mode, omit `--head`. The script refuses a plan that places a hunk twice or names an
+The script refuses a plan that places a hunk twice or names an
 unknown hunk. Fix the plan and run it again.
 
 ## Phase 4: Open it and hand off
@@ -282,7 +286,7 @@ itself, that window needs "Developer: Reload Window".
 The source of the extension is in `<skill dir>/vscode-ext/`. Its README says how to rebuild it.
 
 Tell the human in at most 3 lines: the worktree path, whether the review is running, and to say
-"done" when finished. In local mode, name the untracked files that the brief does not show.
+"done" when finished.
 
 ## Phase 5: Land the bot's findings
 
@@ -336,9 +340,13 @@ When the human says "go", read the file again and act on the action of every ite
 ## Phase 7: Act
 
 **Fixes.** Do every `fix` item. Leave diff mode first, as Phase 1 describes. Check that `git status` then shows only
-the edits made during the review. In local mode, there is no diff mode, and the tree can hold the
-human's uncommitted work. Stage only the lines the fix changed, and ask before committing a file
-that had uncommitted changes before the review. Make the edits in the worktree, one commit for each finding or
+the edits made during the review.
+
+In local mode, make the fixes as edits in the working tree and do not commit them. The tree
+usually holds work that is not committed yet, and the fixes join it. The human commits when
+ready. Commit only when the human asks. Then stage only the lines the fixes changed, and never push.
+
+In PR mode, make the edits in the worktree, one commit for each finding or
 for each set of findings that share a cause. Run the checks the repo's `CLAUDE.md` and `AGENTS.md` require for the touched
 paths. Write commit messages by those rules. Then show `git log --oneline origin/<head>..HEAD` and
 ask before you push. Push with `git push`, never with a force push, unless the human asks for one.
@@ -359,12 +367,16 @@ in the same hunk. If that also fails, put it into one top-level `gh pr comment` 
 `path:line`.
 
 Record each outcome as a line under its item in the findings file:
-`**Outcome:** fixed in <sha> (round <n>)`, `**Outcome:** commented (round <n>)` or
+`**Outcome:** fixed in <sha> (round <n>)`, or `fixed (round <n>)` for an uncommitted local fix,
+`**Outcome:** commented (round <n>)` or
 `**Outcome:** dropped (round <n>)`. The extension shows an item with an outcome as resolved.
 
 When any `fix` landed, start the next round at once: run Phases 1 to 4 again as "Next round". The
 human then reads the fixes as the changes since the last round. Do not ask first. When the human
 says they are finished, end the review as below.
-When the review ends, finish with the PR URL, the counts, and the worktree path. Ask whether to remove the worktree with
+In local mode, the review ends with the fixes in the working tree and nothing to restore. Ask
+whether to delete `<name>.brief.json` and `<name>.brief-findings.md`. Git ignores both.
+
+When a PR review ends, finish with the PR URL, the counts, and the worktree path. Ask whether to remove the worktree with
 `git worktree remove`. Never remove the main tree. If no fix happened, leave diff mode before the
 worktree is removed or reused.

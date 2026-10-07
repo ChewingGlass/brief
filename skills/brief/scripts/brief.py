@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Index the hunks of a diff, and resolve a plan that orders them into a brief.
 
+  brief.py snapshot                                                    > <sha>
   brief.py hunks --base <sha> [--head <rev>] [-U <n>]                 > hunks.json
   brief.py model --base <sha> [--head <rev>] [-U <n>] --plan plan.json
                  [--round <n> --snapshot <sha> --since <sha>]       > <name>.brief.json
 
-Both commands diff <base> against <head>. <head> defaults to the working tree. Hunk ids are stable
+`snapshot` commits the working tree, untracked files included, without touching the index.
+`hunks` and `model` diff <base> against <head>. <head> defaults to the working tree. Hunk ids are stable
 for one diff, so both commands must use the same arguments. Every hunk the plan does not place goes
 to the rest of the diff, so the brief always holds the whole change.
 """
@@ -200,10 +202,35 @@ def build_model(hunks, plan, ctx):
     }
 
 
+def snapshot():
+    """A commit of the whole working tree, untracked files included, with HEAD as its parent.
+
+    It goes through a copy of the index, so the real index and the files stay as they are.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    index = subprocess.run(["git", "rev-parse", "--git-path", "index"], capture_output=True, text=True, check=True).stdout.strip()
+    with tempfile.TemporaryDirectory() as scratch:
+        temp_index = os.path.join(scratch, "index")
+        if os.path.exists(index):
+            shutil.copyfile(index, temp_index)
+
+        env = dict(os.environ, GIT_INDEX_FILE=temp_index)
+        subprocess.run(["git", "add", "-A"], env=env, check=True, capture_output=True)
+        tree = subprocess.run(["git", "write-tree"], env=env, capture_output=True, text=True, check=True).stdout.strip()
+
+    head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    commit = subprocess.run(["git", "commit-tree", tree, "-p", head, "-m", "brief snapshot"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    return commit
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["hunks", "model"])
-    parser.add_argument("--base", required=True)
+    parser.add_argument("command", choices=["hunks", "model", "snapshot"])
+    parser.add_argument("--base")
     parser.add_argument("--head")
     parser.add_argument("-U", dest="context", type=int, default=3)
     parser.add_argument("--plan")
@@ -211,6 +238,13 @@ def main():
     parser.add_argument("--snapshot", help="the commit that holds the state this round reviews")
     parser.add_argument("--since", help="the snapshot of the last round, for the changes since then")
     args = parser.parse_args()
+
+    if args.command == "snapshot":
+        print(snapshot())
+        return
+
+    if not args.base:
+        parser.error("--base is required")
 
     hunks = parse_hunks(git_diff(args.base, args.head, args.context))
 

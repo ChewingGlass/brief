@@ -31,6 +31,21 @@ first. VS Code then shows:
    last round, so you read only the fixes. Comment again and say "done", and the loop repeats until
    you say you are finished.
 
+### Reviewing your own work
+
+`brief` also reviews work that is not a PR yet, such as what an agent did in a worktree:
+
+```
+/brief                         # in that worktree
+/brief ../repo-feature-x       # from another session, by path
+/brief feature-x               # by branch, when no PR exists
+```
+
+Local mode compares the merge base with the default branch to the working tree, so uncommitted
+edits and new untracked files show. It never moves HEAD or the index. Fixes land as uncommitted
+edits in the worktree, next to the work they fix, and nothing is committed or pushed unless you
+ask. When you finish, the worktree holds the reviewed work plus the fixes.
+
 ### Rounds
 
 A review often takes several rounds: you comment, an agent fixes, you read the fixes, you comment
@@ -39,8 +54,9 @@ again. `brief` keeps one review across those rounds.
 - The findings file carries every round. A handled finding gets an `**Outcome:**` line, such as
   `fixed in abc123 (round 2)`, and shows as resolved in VS Code. Open findings move with their
   code.
-- Each round records the state you reviewed. In local mode, uncommitted edits count, and the
-  snapshot is a `git stash create` commit, which leaves your files and index alone.
+- Each round records the state you reviewed. In local mode, that is a snapshot commit of the whole
+  working tree, untracked files included, made through a copy of the index, so your files and
+  index stay as they are.
 - Run `/brief` again in the same Claude session whenever the code changed in another way, such as
   your own edits or another agent's commits. It starts the next round from the last state you
   reviewed.
