@@ -1,10 +1,16 @@
 {
   "name": "brief",
   "description": "Review a PR or a branch in VS Code as its diff reordered along the call path, riskiest path first, with findings collected as comments.",
-  "version": "0.3.0",
-  "author": { "name": "Noah Prince" },
+  "version": "0.3.1",
+  "author": {
+    "name": "Noah Prince"
+  },
   "homepage": "https://github.com/ChewingGlass/brief",
   "repository": "https://github.com/ChewingGlass/brief",
   "license": "MIT",
-  "keywords": ["code-review", "vscode", "pull-request"]
+  "keywords": [
+    "code-review",
+    "vscode",
+    "pull-request"
+  ]
 }

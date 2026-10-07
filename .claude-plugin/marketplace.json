@@ -1,6 +1,9 @@
 {
   "name": "chewingglass",
-  "owner": { "name": "Noah Prince" },
+  "description": "Claude Code plugins by ChewingGlass.",
+  "owner": {
+    "name": "Noah Prince"
+  },
   "plugins": [
     {
       "name": "brief",

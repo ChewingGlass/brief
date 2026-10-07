@@ -1,6 +1,6 @@
 ---
 name: brief
-description: Review a PR, or the current branch, as its diff reordered along the call path, in VS Code. Checks the PR out into a worktree (or uses the current checkout against the default branch when no target is given), writes a brief that a bundled VS Code extension shows as a tree of call paths beside one multi-file diff in call order, riskiest path first, and runs /code-review in the background. When the human is done, merges their findings with the review's, and for each one asks whether to fix it on the branch or leave a PR comment. Use for "/brief 371", "/brief" on the current branch, "brief me on PR N", "open PR N for review".
+description: Review a PR, or the current branch, as its diff reordered along the call path, in VS Code. Checks the PR out into a worktree (or uses the current checkout against the default branch when no target is given), writes a brief that a bundled VS Code extension shows as a tree of call paths beside one multi-file diff in call order, riskiest path first, and runs /code-review in the background. When the human is done, merges their findings with the review's and writes a recommended action (fix, comment or drop) under each one in the findings file. The human edits the actions and says "go", and the skill carries out all of them. Use for "/brief 371", "/brief" on the current branch, "brief me on PR N", "open PR N for review".
 ---
 
 # Brief
@@ -280,20 +280,30 @@ with the bot's findings:
   the code. Then mark each as confirmed, refuted with the line that refutes it, or unsure.
 - Drop nothing on your own authority. A refuted finding stays on the list, marked as refuted.
 
-Show the merged list in chat, one line for each finding. Then ask what to do with each finding
-through `AskUserQuestion`, up to 4 findings per call. The options are:
+Then write a decision line under every finding in the findings file, so the human decides all of
+them in one pass in the file:
 
-- **Fix on branch**: change the code in the worktree.
-- **Comment on PR**: leave an inline comment.
-- **Drop**: do nothing.
+```markdown
+- **F1** high, CONFIRMED · [trigger.rs:318](<src/controller/trigger.rs#L318>)
+  The reward share rounds up, so two fires can pay more than the full reward.
+  **Action:** fix · the rounding is a one-line change
+```
 
-Put the recommended option first. Recommend a fix when the fix is local and clear. Recommend a
-comment when the fix needs a design decision from the author. Recommend a drop for a refuted
-finding. With no PR, the comment option does not exist.
+The action is `fix`, `comment` or `drop`, and the first word after `**Action:**` is the decision.
+Write the recommendation first, with a reason of a few words. Recommend `fix` when the fix is
+local and clear, `comment` when it needs a design decision from the author, and `drop` for a
+refuted finding. Mark a refuted finding in its reason with the line that refutes it. With no PR,
+`comment` is not an option.
+
+Tell the human in at most 2 lines: how many findings have each action, and to edit the action
+words in the file and say "go". The human may also add `fix: <how>` under an item to steer the fix.
+Do not ask about findings one by one.
+
+When the human says "go", read the file again and act on the action of every item.
 
 ## Phase 7: Act
 
-**Fixes.** Leave diff mode first, as Phase 1 describes. Check that `git status` then shows only
+**Fixes.** Do every `fix` item. Leave diff mode first, as Phase 1 describes. Check that `git status` then shows only
 the edits made during the review. In local mode, there is no diff mode, and the tree can hold the
 human's uncommitted work. Stage only the lines the fix changed, and ask before committing a file
 that had uncommitted changes before the review. Make the edits in the worktree, one commit for each finding or
@@ -301,7 +311,8 @@ for each set of findings that share a cause. Run the checks the repo's `CLAUDE.m
 paths. Write commit messages by those rules. Then show `git log --oneline origin/<head>..HEAD` and
 ask before you push. Push with `git push`, never with a force push, unless the human asks for one.
 
-**Comments.** Draft every comment, then show all of them together in one approval:
+**Comments.** Draft a comment for every `comment` item, then show all of them together in one
+approval:
 post, edit some, or cancel. Comment text states the fact about the code and the reason it matters,
 with no first or second person and no reference to this review. The repo's comment rules take
 precedence. Post them as one review:

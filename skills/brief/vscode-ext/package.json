@@ -2,7 +2,7 @@
   "name": "brief",
   "displayName": "Brief",
   "description": "Shows a PR brief as a tree of call paths, and opens the change as one multi-file diff in call order.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "chewingglass",
   "license": "MIT",
   "engines": {

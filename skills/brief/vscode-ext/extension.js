@@ -319,14 +319,18 @@ function parseFindings(text, root) {
     const anchor = raw.match(/\(<?([^)#\s>]+)#L(\d+)>?\)/) || raw.match(/([\w./-]+\.\w+):(\d+)/);
     const file = anchor ? path.relative(root, path.resolve(root, anchor[1])) : undefined;
     const id = (raw.match(/\*\*(F\d+)\*\*/) || [])[1] || `${item.source === "mine" ? "M" : "F"}${index + 1}`;
-    return { id, source: item.source, raw, file, line: anchor ? Number(anchor[2]) : undefined,
-      header: plain(item.lines[0]), claim: plain(item.lines.slice(1).join(" ")) };
+    const body = item.lines.slice(1);
+    const actionLine = body.find((line) => line.startsWith("**Action:**"));
+    const action = actionLine ? plain(actionLine.slice("**Action:**".length)).split(/\s/)[0] : undefined;
+    return { id, source: item.source, raw, file, line: anchor ? Number(anchor[2]) : undefined, action,
+      header: plain(item.lines[0]), claim: plain(body.filter((line) => line !== actionLine).join(" ")) };
   });
 }
 
 function findingNode(finding) {
   const node = new Node(finding.claim || finding.header, false);
-  node.description = finding.claim ? finding.header : undefined;
+  const prefix = finding.action ? `[${finding.action}] ` : "";
+  node.description = `${prefix}${finding.claim ? finding.header : ""}`;
   node.tooltip = new vscode.MarkdownString(finding.raw);
   node.iconPath = new vscode.ThemeIcon(finding.source === "mine" ? "person" : "warning");
   if (finding.file) {

@@ -15,8 +15,18 @@ first. VS Code then shows:
 - **Findings as comments.** A comment on any line is saved as a finding. A background
   `/code-review` adds its own findings beside yours.
 
-When you are done, Claude merges your findings with the review's. For each one it asks whether to
-fix it on the branch, leave a PR comment, or drop it.
+## Workflow
+
+1. Run `/brief`. VS Code opens the Brief view and the diff. A background review starts unless you
+   pass `--no-review`.
+2. Read. Leave a comment on any line that needs one. Each comment is saved as a finding in
+   `<name>.brief-findings.md`, and the review's findings land in the same file.
+3. Say "done". Claude merges your findings with the review's and checks each one against the
+   code. Under each finding it writes a recommended action and a reason:
+   `**Action:** fix · the guard is a one-line change`. The action is `fix`, `comment` or `drop`.
+4. Edit the action words in the file. Add `fix: <how>` under an item to steer a fix.
+5. Say "go". Claude makes every fix as commits on the branch and drafts every PR comment. It shows
+   the comments and the commits for one approval before anything is posted or pushed.
 
 ## Install
 
