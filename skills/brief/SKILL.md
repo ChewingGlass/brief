@@ -342,9 +342,16 @@ When the human says "go", read the file again and act on the action of every ite
 **Fixes.** Do every `fix` item. Leave diff mode first, as Phase 1 describes. Check that `git status` then shows only
 the edits made during the review.
 
-In local mode, make the fixes as edits in the working tree and do not commit them. The tree
-usually holds work that is not committed yet, and the fixes join it. The human commits when
-ready. Commit only when the human asks. Then stage only the lines the fixes changed, and never push.
+In local mode, the branch can hold commits and uncommitted work at once, and the brief shows
+both. Fixes follow the state of the tree when the round started:
+
+- Clean tree: commit the fixes on the branch, one commit for each finding, as the rest of the
+  branch was committed.
+- Uncommitted work present: leave the fixes as uncommitted edits next to it. A commit would mix
+  the fixes with work the human has not taken yet. Commit only when the human asks, and then
+  stage only the lines the fixes changed.
+
+Never push in local mode.
 
 In PR mode, make the edits in the worktree, one commit for each finding or
 for each set of findings that share a cause. Run the checks the repo's `CLAUDE.md` and `AGENTS.md` require for the touched

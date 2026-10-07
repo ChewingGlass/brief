@@ -42,9 +42,11 @@ first. VS Code then shows:
 ```
 
 Local mode compares the merge base with the default branch to the working tree, so uncommitted
-edits and new untracked files show. It never moves HEAD or the index. Fixes land as uncommitted
-edits in the worktree, next to the work they fix, and nothing is committed or pushed unless you
-ask. When you finish, the worktree holds the reviewed work plus the fixes.
+edits and new untracked files show. Commits on the branch show as well, so it does not
+matter whether the agent committed as it went. Local mode never moves HEAD or the index. Fixes
+follow the tree: on a clean tree they are committed on the branch, one commit for each finding.
+With uncommitted work present, they stay uncommitted next to it. Nothing is pushed. When you
+finish, the worktree holds the reviewed work plus the fixes.
 
 ### Rounds
 
