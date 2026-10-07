@@ -2,7 +2,7 @@
   "name": "brief",
   "displayName": "Brief",
   "description": "Shows a PR brief as a tree of call paths, and opens the change as one multi-file diff in call order.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publisher": "chewingglass",
   "license": "MIT",
   "engines": {
@@ -38,6 +38,11 @@
         "icon": "$(diff-multiple)"
       },
       {
+        "command": "brief.openSince",
+        "title": "Brief: Open changes since the last round",
+        "icon": "$(history)"
+      },
+      {
         "command": "brief.openPath",
         "title": "Open this path's changes",
         "icon": "$(diff-multiple)"
@@ -63,10 +68,19 @@
         "command": "brief.saveFinding",
         "title": "Add finding",
         "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "brief.openSinceFile",
+        "title": "Open changes since the last round"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "brief.openSince",
+          "when": "view == brief.view && brief.hasRound",
+          "group": "navigation@0"
+        },
         {
           "command": "brief.openAll",
           "when": "view == brief.view",
@@ -92,6 +106,10 @@
         },
         {
           "command": "brief.saveFinding",
+          "when": "false"
+        },
+        {
+          "command": "brief.openSinceFile",
           "when": "false"
         }
       ],

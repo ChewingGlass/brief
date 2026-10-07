@@ -115,9 +115,24 @@ Pass `--base "$MB"` and no `--head` to `brief.py`, so the diff runs to the worki
 files are absent from `git diff`. Name each one in the hand-off, so the human knows the brief
 does not show it. Phase 6 has no comment option, and Phase 7 commits on the current branch.
 
+**Next round.** If `$WT/<name>.brief.json` exists, this run is the next round of the same
+review. Read its `round` and `snapshot`. The human re-runs `/brief` after another agent or they
+changed the code, and Phase 7 starts a round itself after its own fixes. Bring the code up to
+date first:
+
+- PR mode: leave diff mode, run `git pull --ff-only`, record the new `HEAD_SHA`, and enter diff
+  mode again.
+- Local mode: change nothing.
+
+The new snapshot is the state this round reviews. In PR mode it is `HEAD_SHA`. In local mode it is
+`git stash create`, which writes a commit of the working tree without changing the tree or the
+index. Use `HEAD` when that command prints nothing. If the new snapshot has no diff against the
+last one, tell the human that nothing changed since round N, and stop.
+
 ## Phase 2: Start the review in the background
 
-Skip this phase with `--no-review`.
+Skip this phase with `--no-review`. In a later round, the review covers only the changes since the
+last round. Tell it that base, the last `snapshot`.
 
 Launch it before writing the brief, so the two run at the same time:
 
@@ -220,6 +235,23 @@ printf '# Findings\n\n## Mine\n\n<!-- One finding per item. A path:line anchors 
 ```
 
 With `--no-review`, write `_No review._` in place of `_Review running._`.
+
+In a later round, keep the plan from the last round in the scratchpad as the start. Hunk ids change
+when the code changes, so index the hunks again and map the steps onto the new ids. Pass the
+round arguments:
+
+```bash
+python3 $B model --base "$MB" --head "$HEAD_SHA" --plan <plan> \
+  --round <n> --snapshot <new snapshot> --since <last snapshot> > "$WT/<name>.brief.json"
+```
+
+Never rewrite an existing findings file. It carries the findings of every round. Instead, move
+the `file:line` link of every finding with no `**Outcome:**` line to where its code is now. For a
+background review, add `_Review running (round <n>)._` at the end of `## Claude`. Phase 5
+replaces that line.
+
+The extension watches the brief file. A new round opens its diff of the changes since the last
+round in the open window, with no reload.
 
 In local mode, omit `--head`. The script refuses a plan that places a hunk twice or names an
 unknown hunk. Fix the plan and run it again.
@@ -326,7 +358,13 @@ GitHub rejects a comment on a line outside the diff. Move that comment to the ne
 in the same hunk. If that also fails, put it into one top-level `gh pr comment` that carries the
 `path:line`.
 
-Record each outcome under `## Claude` in the findings file: `fixed in <sha>`, `commented`, or `dropped`.
-Finish with the PR URL, the counts, and the worktree path. Ask whether to remove the worktree with
+Record each outcome as a line under its item in the findings file:
+`**Outcome:** fixed in <sha> (round <n>)`, `**Outcome:** commented (round <n>)` or
+`**Outcome:** dropped (round <n>)`. The extension shows an item with an outcome as resolved.
+
+When any `fix` landed, start the next round at once: run Phases 1 to 4 again as "Next round". The
+human then reads the fixes as the changes since the last round. Do not ask first. When the human
+says they are finished, end the review as below.
+When the review ends, finish with the PR URL, the counts, and the worktree path. Ask whether to remove the worktree with
 `git worktree remove`. Never remove the main tree. If no fix happened, leave diff mode before the
 worktree is removed or reused.

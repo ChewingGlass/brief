@@ -56,7 +56,7 @@ class Brief {
 
   findingsIn(hunks) {
     return this.findings
-      .filter((f) => f.file && hunks.some((h) => h.file === f.file && f.line >= h.new_start && f.line < h.new_start + h.new_len))
+      .filter((f) => !f.outcome && f.file && hunks.some((h) => h.file === f.file && f.line >= h.new_start && f.line < h.new_start + h.new_len))
       .map((f) => f.id);
   }
 
@@ -107,12 +107,27 @@ class Brief {
   }
 
   changes(hunks) {
-    const git = gitApi();
     const files = [...new Set(hunks.map((hunk) => hunk.file))];
+    return this.diffs(files, this.model.base, this.model.statuses);
+  }
+
+  // The files changed since the last round, in the order the brief reads them.
+  sinceFiles() {
+    const changed = Object.keys(this.model.since.statuses);
+    const ordered = [...new Set(this.order.map((hunk) => hunk.file))].filter((file) => changed.includes(file));
+    return [...ordered, ...changed.filter((file) => !ordered.includes(file))];
+  }
+
+  sinceChanges() {
+    return this.diffs(this.sinceFiles(), this.model.since.base, this.model.since.statuses);
+  }
+
+  diffs(files, base, statuses) {
+    const git = gitApi();
     return files.map((file) => {
       const uri = vscode.Uri.file(path.join(this.model.root, file));
-      const status = this.status(file);
-      const original = status === "A" ? undefined : git.toGitUri(uri, this.model.base);
+      const status = statuses[file] || "M";
+      const original = status === "A" ? undefined : git.toGitUri(uri, base);
       const modified = status === "D" ? undefined : uri;
       return [uri, original, modified];
     });
@@ -204,6 +219,26 @@ function nestSteps(brief, steps) {
   return top;
 }
 
+function roundNodes(brief) {
+  const since = brief.model.since;
+  if (!since) {
+    return [];
+  }
+
+  const files = brief.sinceFiles().map((file) => {
+    const node = new Node(file, false);
+    node.resourceUri = vscode.Uri.file(path.join(brief.model.root, file));
+    node.description = since.statuses[file];
+    node.command = { command: "brief.openSinceFile", title: "Open", arguments: [file] };
+    return node;
+  });
+  const node = new Node(`Round ${brief.model.round}: ${files.length} files changed since round ${brief.model.round - 1}`, true, files);
+  node.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
+  node.iconPath = new vscode.ThemeIcon("history");
+  node.command = { command: "brief.openSince", title: "Open" };
+  return [node];
+}
+
 function buildTree(brief) {
   const paths = brief.model.paths.map((section) => {
     const node = new Node(section.heading, true, nestSteps(brief, section.steps));
@@ -225,7 +260,7 @@ function buildTree(brief) {
     })
     .filter(Boolean);
 
-  return [findingsNode(brief), ...paths, ...rest];
+  return [...roundNodes(brief), findingsNode(brief), ...paths, ...rest];
 }
 
 class TreeProvider {
@@ -322,14 +357,17 @@ function parseFindings(text, root) {
     const body = item.lines.slice(1);
     const actionLine = body.find((line) => line.startsWith("**Action:**"));
     const action = actionLine ? plain(actionLine.slice("**Action:**".length)).split(/\s/)[0] : undefined;
-    return { id, source: item.source, raw, file, line: anchor ? Number(anchor[2]) : undefined, action,
-      header: plain(item.lines[0]), claim: plain(body.filter((line) => line !== actionLine).join(" ")) };
+    const outcomeLine = body.find((line) => line.startsWith("**Outcome:**"));
+    const outcome = outcomeLine ? plain(outcomeLine.slice("**Outcome:**".length)) : undefined;
+    const text = body.filter((line) => line !== actionLine && line !== outcomeLine);
+    return { id, source: item.source, raw, file, line: anchor ? Number(anchor[2]) : undefined, action, outcome,
+      header: plain(item.lines[0]), claim: plain(text.join(" ")) };
   });
 }
 
 function findingNode(finding) {
   const node = new Node(finding.claim || finding.header, false);
-  const prefix = finding.action ? `[${finding.action}] ` : "";
+  const prefix = finding.outcome ? `[${finding.outcome}] ` : finding.action ? `[${finding.action}] ` : "";
   node.description = `${prefix}${finding.claim ? finding.header : ""}`;
   node.tooltip = new vscode.MarkdownString(finding.raw);
   node.iconPath = new vscode.ThemeIcon(finding.source === "mine" ? "person" : "warning");
@@ -342,7 +380,15 @@ function findingNode(finding) {
 
 function findingsNode(brief) {
   const uri = findingsUri(brief.uri);
-  const node = new Node("Findings", true, brief.findings.map(findingNode));
+  const open = brief.findings.filter((f) => !f.outcome).map(findingNode);
+  const resolved = brief.findings.filter((f) => f.outcome).map(findingNode);
+  if (resolved.length) {
+    const group = new Node(`Resolved (${resolved.length})`, true, resolved);
+    group.iconPath = new vscode.ThemeIcon("pass");
+    open.push(group);
+  }
+
+  const node = new Node("Findings", true, open);
   node.collapsibleState = brief.findings.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None;
   node.description = brief.findings.length ? `${brief.findings.length}, open ${path.basename(uri.fsPath)}` : path.basename(uri.fsPath);
   node.iconPath = new vscode.ThemeIcon("checklist");
@@ -408,6 +454,7 @@ class FindingsComments {
         thread.label = finding.header;
         thread.findingId = finding.id;
         thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
+        thread.state = finding.outcome ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
         return thread;
       });
   }
@@ -723,6 +770,18 @@ class Navigator {
     }
   }
 
+  async openSince() {
+    const model = this.brief && this.brief.model;
+    if (model && model.since) {
+      await openChanges(`${model.title}: round ${model.round}, since round ${model.round - 1}`, this.brief.sinceChanges());
+    }
+  }
+
+  async openSinceFile(file) {
+    const model = this.brief.model;
+    await openDiff({ file: path.join(model.root, file), base: model.since.base, line: 1, status: model.since.statuses[file] || "M" });
+  }
+
   async openPath(node) {
     const hunks = node.section.steps.flatMap((step) => step.hunks || []);
     await openChanges(node.section.heading, this.brief.changes(hunks));
@@ -775,6 +834,7 @@ function activate(context) {
     const brief = await loadBrief();
     nav.brief = brief;
     vscode.commands.executeCommand("setContext", "brief.active", Boolean(brief));
+    vscode.commands.executeCommand("setContext", "brief.hasRound", Boolean(brief && brief.model.since));
     callSites.set(brief);
     comments.show(brief);
     if (!brief) {
@@ -792,7 +852,7 @@ function activate(context) {
     const key = `opened:${brief.uri.toString()}:${model.generated}`;
     if (openOnLoad && !context.workspaceState.get(key)) {
       await context.workspaceState.update(key, true);
-      await nav.openAll();
+      await (model.since ? nav.openSince() : nav.openAll());
       await vscode.commands.executeCommand("brief.view.focus");
     }
   }
@@ -808,6 +868,8 @@ function activate(context) {
 
   const commands = {
     "brief.openAll": () => nav.openAll(),
+    "brief.openSince": () => nav.openSince(),
+    "brief.openSinceFile": (file) => nav.openSinceFile(file),
     "brief.openPath": (node) => nav.openPath(node),
     "brief.openHunk": (hunk) => nav.openHunk(hunk),
     "brief.openTarget": (target) => nav.openTarget(target),

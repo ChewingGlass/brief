@@ -2,7 +2,8 @@
 """Index the hunks of a diff, and resolve a plan that orders them into a brief.
 
   brief.py hunks --base <sha> [--head <rev>] [-U <n>]                 > hunks.json
-  brief.py model --base <sha> [--head <rev>] [-U <n>] --plan plan.json > <name>.brief.json
+  brief.py model --base <sha> [--head <rev>] [-U <n>] --plan plan.json
+                 [--round <n> --snapshot <sha> --since <sha>]       > <name>.brief.json
 
 Both commands diff <base> against <head>. <head> defaults to the working tree. Hunk ids are stable
 for one diff, so both commands must use the same arguments. Every hunk the plan does not place goes
@@ -192,6 +193,8 @@ def build_model(hunks, plan, ctx):
         "title": plan["title"], "url": plan["url"], "brief": plan["brief"],
         "root": ctx["root"], "base": ctx["base"], "head": ctx.get("head"),
         "generated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "round": ctx["round"], "snapshot": ctx["snapshot"],
+        "since": {"base": ctx["since"], "statuses": file_statuses(ctx["since"], ctx["head"])} if ctx["since"] else None,
         "added": sum(h.added for h in hunks), "deleted": sum(h.deleted for h in hunks),
         "statuses": ctx["statuses"], "paths": paths, "rest": rest,
     }
@@ -204,6 +207,9 @@ def main():
     parser.add_argument("--head")
     parser.add_argument("-U", dest="context", type=int, default=3)
     parser.add_argument("--plan")
+    parser.add_argument("--round", type=int, default=1)
+    parser.add_argument("--snapshot", help="the commit that holds the state this round reviews")
+    parser.add_argument("--since", help="the snapshot of the last round, for the changes since then")
     args = parser.parse_args()
 
     hunks = parse_hunks(git_diff(args.base, args.head, args.context))
@@ -217,7 +223,8 @@ def main():
         plan = json.load(plan_file)
 
     root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
-    ctx = {"root": root, "base": args.base, "head": args.head, "statuses": file_statuses(args.base, args.head)}
+    ctx = {"root": root, "base": args.base, "head": args.head, "statuses": file_statuses(args.base, args.head),
+           "round": args.round, "snapshot": args.snapshot or args.head, "since": args.since}
     json.dump(build_model(hunks, plan, ctx), sys.stdout, indent=1)
 
 

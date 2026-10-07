@@ -27,6 +27,28 @@ first. VS Code then shows:
 4. Edit the action words in the file. Add `fix: <how>` under an item to steer a fix.
 5. Say "go". Claude makes every fix as commits on the branch and drafts every PR comment. It shows
    the comments and the commits for one approval before anything is posted or pushed.
+6. When fixes landed, Claude starts the next round by itself. VS Code opens the changes since the
+   last round, so you read only the fixes. Comment again and say "done", and the loop repeats until
+   you say you are finished.
+
+### Rounds
+
+A review often takes several rounds: you comment, an agent fixes, you read the fixes, you comment
+again. `brief` keeps one review across those rounds.
+
+- The findings file carries every round. A handled finding gets an `**Outcome:**` line, such as
+  `fixed in abc123 (round 2)`, and shows as resolved in VS Code. Open findings move with their
+  code.
+- Each round records the state you reviewed. In local mode, uncommitted edits count, and the
+  snapshot is a `git stash create` commit, which leaves your files and index alone.
+- Run `/brief` again in the same Claude session whenever the code changed in another way, such as
+  your own edits or another agent's commits. It starts the next round from the last state you
+  reviewed.
+- The Brief view shows a **Round N** node with the files changed since the last round. The history
+  button reopens that diff, and the diff button opens the whole change.
+
+The open VS Code window picks up each new round by itself. Reload it only after the extension
+itself updates.
 
 ## Install
 
