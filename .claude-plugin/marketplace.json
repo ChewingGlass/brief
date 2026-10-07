@@ -1,0 +1,11 @@
+{
+  "name": "chewingglass",
+  "owner": { "name": "Noah Prince" },
+  "plugins": [
+    {
+      "name": "brief",
+      "source": "./",
+      "description": "Review a PR or a branch in VS Code as its diff reordered along the call path."
+    }
+  ]
+}

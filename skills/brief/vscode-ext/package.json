@@ -1,0 +1,144 @@
+{
+  "name": "brief",
+  "displayName": "Brief",
+  "description": "Shows a PR brief as a tree of call paths, and opens the change as one multi-file diff in call order.",
+  "version": "0.3.0",
+  "publisher": "chewingglass",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onUri",
+    "workspaceContains:*.brief.json",
+    "onView:brief.view"
+  ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "views": {
+      "brief": [
+        {
+          "id": "brief.view",
+          "name": "Brief"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "brief.openAll",
+        "title": "Brief: Open all changes in brief order",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "brief.openPath",
+        "title": "Open this path's changes",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "brief.next",
+        "title": "Brief: Next hunk"
+      },
+      {
+        "command": "brief.previous",
+        "title": "Brief: Previous hunk"
+      },
+      {
+        "command": "brief.refresh",
+        "title": "Brief: Reload",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "brief.openFileAtCursor",
+        "title": "Brief: Open file at cursor"
+      },
+      {
+        "command": "brief.saveFinding",
+        "title": "Add finding",
+        "enablement": "!commentIsEmpty"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "brief.openAll",
+          "when": "view == brief.view",
+          "group": "navigation@1"
+        },
+        {
+          "command": "brief.refresh",
+          "when": "view == brief.view",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "brief.openPath",
+          "when": "view == brief.view && viewItem == briefPath",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "brief.openPath",
+          "when": "false"
+        },
+        {
+          "command": "brief.saveFinding",
+          "when": "false"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "brief.openFileAtCursor",
+          "when": "brief.active && isInDiffEditor",
+          "group": "navigation@0"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "brief.saveFinding",
+          "group": "inline",
+          "when": "commentController == brief"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "brief.next",
+        "key": "alt+]",
+        "when": "brief.active"
+      },
+      {
+        "command": "brief.previous",
+        "key": "alt+[",
+        "when": "brief.active"
+      },
+      {
+        "command": "brief.openFileAtCursor",
+        "key": "alt+o",
+        "when": "brief.active && editorTextFocus"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "brief",
+          "title": "Brief",
+          "icon": "icon.svg"
+        }
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChewingGlass/brief"
+  }
+}
