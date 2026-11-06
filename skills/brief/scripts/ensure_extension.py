@@ -18,6 +18,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXTENSION_DIR = os.path.join(os.path.dirname(HERE), "vscode-ext")
 
+# Earlier builds used these ids. A profile that keeps one shows two Brief views with the same buttons.
+LEGACY_IDS = ["local.brief"]
+
 
 def bundled_version():
     with open(os.path.join(EXTENSION_DIR, "package.json")) as manifest:
@@ -47,15 +50,10 @@ def profile_names():
     return [None] + [profile["name"] for profile in profiles if not profile["location"].startswith("builtin")]
 
 
-def installed_version(code, extension_id, profile):
+def installed_versions(code, profile):
     cmd = [code, "--list-extensions", "--show-versions"] + (["--profile", profile] if profile else [])
     output = subprocess.run(cmd, capture_output=True, text=True).stdout
-    for line in output.splitlines():
-        name, _, version = line.partition("@")
-        if name.lower() == extension_id:
-            return version
-
-    return None
+    return {name.lower(): version for name, _, version in (line.partition("@") for line in output.splitlines())}
 
 
 def main():
@@ -69,10 +67,17 @@ def main():
     vsix = os.path.join(EXTENSION_DIR, "brief.vsix")
     extension_id, version = bundled_version()
     for profile in profile_names():
-        if installed_version(args.code, extension_id, profile) == version:
+        installed = installed_versions(args.code, profile)
+        profile_args = ["--profile", profile] if profile else []
+        for legacy in LEGACY_IDS:
+            if legacy in installed:
+                subprocess.run([args.code, "--uninstall-extension", legacy] + profile_args, check=True, capture_output=True)
+                print(f"removed {legacy} from profile {profile or 'Default'}")
+
+        if installed.get(extension_id) == version:
             continue
 
-        cmd = [args.code, "--install-extension", vsix, "--force"] + (["--profile", profile] if profile else [])
+        cmd = [args.code, "--install-extension", vsix, "--force"] + profile_args
         subprocess.run(cmd, check=True, capture_output=True)
         print(f"installed {extension_id} {version} in profile {profile or 'Default'}")
 

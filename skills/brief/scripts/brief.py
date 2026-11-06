@@ -10,17 +10,27 @@
 `hunks` and `model` diff <base> against <head>. <head> defaults to the working tree. Hunk ids are stable
 for one diff, so both commands must use the same arguments. Every hunk the plan does not place goes
 to the rest of the diff, so the brief always holds the whole change.
+
+An added file that holds code from a deleted file is diffed against that code, not against nothing,
+and the deleted file against the part no added file took. See `moves.py`.
 """
 
 import argparse
 import datetime
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass, asdict
 
+from moves import find_moves
+
+# Git names the enclosing function only for paths inside the repo, so a diff of the built move files
+# finds it with this pattern instead.
+DEFINITION = re.compile(r"^\s*(pub(\([^)]*\))?\s+|export\s+|async\s+|unsafe\s+|default\s+)*"
+                        r"(fn|impl|struct|enum|trait|mod|function|class|interface|def)\b")
 HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$")
 
 
@@ -36,18 +46,88 @@ class Hunk:
     deleted: int
     enclosing: str
     text: str
+    origin: str = ""
 
 
 def git_diff(base, head, context):
-    cmd = ["git", "diff", f"-U{context}", "--no-color", "--no-ext-diff", base]
+    cmd = ["git", "diff", f"-U{context}", "--no-color", "--no-ext-diff", "--no-renames", base]
     if head:
         cmd.append(head)
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
 
 
-def parse_hunks(diff):
+def file_diff(old_path, new_path, context):
+    cmd = ["git", "diff", "--no-index", f"-U{context}", "--no-color", "--no-ext-diff", old_path, new_path]
+    return subprocess.run(cmd, capture_output=True, text=True).stdout
+
+
+def moves_dir(head):
+    git_dir = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], capture_output=True, text=True, check=True).stdout.strip()
+    return os.path.join(git_dir, "brief-moves", head or "worktree")
+
+
+def index_hunks(base, head, context, root):
+    """Every hunk of the diff, with moved code diffed against where it came from."""
+    statuses = file_statuses(base, head)
+    targets, sources = find_moves(base, head, statuses, root, moves_dir(head))
+    by_file = {}
+    for hunk in parse_hunks(git_diff(base, head, context)):
+        by_file.setdefault(hunk.file, []).append(hunk)
+
     hunks = []
-    file = None
+    for file in statuses:
+        if file in targets:
+            move = targets[file]
+            moved = parse_hunks(file_diff(move.base_path, move.head_path, context), file)
+            with open(move.head_path, encoding="utf-8") as head_file:
+                head_lines = head_file.read().splitlines()
+            for hunk in moved:
+                hunk.origin = move.origin(hunk.old_start + (1 if hunk.old_start == 0 else 0))
+                hunk.enclosing = enclosing_definition(head_lines, hunk.new_start)
+            hunks.extend(moved)
+        elif file in sources:
+            hunks.extend(parse_hunks(file_diff(sources[file].base_path, sources[file].kept_path, context), file))
+        else:
+            hunks.extend(by_file.get(file, []))
+
+    for index, hunk in enumerate(hunks):
+        hunk.id = f"h{index + 1}"
+
+    return hunks, targets, sources
+
+
+def enclosing_definition(lines, start):
+    for line in reversed(lines[:max(start - 1, 0)]):
+        if DEFINITION.match(line):
+            return line.strip()
+
+    return ""
+
+
+def moves_entry(targets, sources, hunks):
+    entry = {}
+    for file, move in targets.items():
+        own = [h for h in hunks if h.file == file]
+        origins = {}
+        for segment in move.segments:
+            origins[segment.source] = origins.get(segment.source, 0) + segment.matched
+        entry[file] = {"role": "target", "original": move.base_path, "modified": None,
+                       "from": [{"file": f, "lines": n} for f, n in origins.items()],
+                       "moved": sum(s.matched for s in move.segments),
+                       "added": sum(h.added for h in own), "deleted": sum(h.deleted for h in own)}
+
+    for file, move in sources.items():
+        own = [h for h in hunks if h.file == file]
+        entry[file] = {"role": "source", "original": move.base_path, "modified": move.kept_path,
+                       "to": [{"file": f, "lines": n} for f, n in move.targets.items()],
+                       "moved": move.kept_lines, "added": 0, "deleted": sum(h.deleted for h in own)}
+
+    return entry
+
+
+def parse_hunks(diff, only_file=None):
+    hunks = []
+    file = only_file
     current = None
 
     def close():
@@ -58,11 +138,11 @@ def parse_hunks(diff):
         if line.startswith("diff --git "):
             close()
             current = None
-            file = line.split(" b/", 1)[1]
+            file = only_file or line.split(" b/", 1)[1]
             continue
 
         if line.startswith("+++ "):
-            if line != "+++ /dev/null":
+            if line != "+++ /dev/null" and not only_file:
                 file = line[6:] if line.startswith("+++ b/") else line[4:]
             continue
 
@@ -153,7 +233,7 @@ def hunk_entry(hunk):
     return {"id": hunk.id, "file": hunk.file, "line": hunk.first_changed_line,
             "new_start": hunk.new_start, "new_len": hunk.new_len,
             "old_start": hunk.old_start, "old_len": old_len,
-            "added": hunk.added, "deleted": hunk.deleted, "enclosing": hunk.enclosing}
+            "added": hunk.added, "deleted": hunk.deleted, "enclosing": hunk.enclosing, "origin": hunk.origin}
 
 
 def build_model(hunks, plan, ctx):
@@ -198,7 +278,7 @@ def build_model(hunks, plan, ctx):
         "round": ctx["round"], "snapshot": ctx["snapshot"],
         "since": {"base": ctx["since"], "statuses": file_statuses(ctx["since"], ctx["head"])} if ctx["since"] else None,
         "added": sum(h.added for h in hunks), "deleted": sum(h.deleted for h in hunks),
-        "statuses": ctx["statuses"], "paths": paths, "rest": rest,
+        "statuses": ctx["statuses"], "moves": ctx["moves"], "paths": paths, "rest": rest,
     }
 
 
@@ -246,7 +326,8 @@ def main():
     if not args.base:
         parser.error("--base is required")
 
-    hunks = parse_hunks(git_diff(args.base, args.head, args.context))
+    root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
+    hunks, targets, sources = index_hunks(args.base, args.head, args.context, root)
 
     if args.command == "hunks":
         index = [{k: v for k, v in asdict(h).items() if k != "text"} for h in hunks]
@@ -256,8 +337,8 @@ def main():
     with open(args.plan) as plan_file:
         plan = json.load(plan_file)
 
-    root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
     ctx = {"root": root, "base": args.base, "head": args.head, "statuses": file_statuses(args.base, args.head),
+           "moves": moves_entry(targets, sources, hunks),
            "round": args.round, "snapshot": args.snapshot or args.head, "since": args.since}
     json.dump(build_model(hunks, plan, ctx), sys.stdout, indent=1)
 

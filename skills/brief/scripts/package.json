@@ -1,0 +1,7 @@
+{
+  "name": "brief-scripts",
+  "private": true,
+  "dependencies": {
+    "highlight.js": "11.11.1"
+  }
+}

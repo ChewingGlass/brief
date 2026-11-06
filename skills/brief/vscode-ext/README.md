@@ -7,7 +7,10 @@ diff in the order of the brief.
 - The Brief view shows the brief and the call paths. Each step sits under the step that calls it.
   A click on a step or a hunk opens the diff at that line.
 - `Alt+]` and `Alt+[` move to the next and the previous hunk in brief order.
-- A blue line marks each call site on a path. A click on its note goes to the step it calls.
+- A blue line marks each call site on a path. A click on its note goes to the step it calls. In
+  the view, a step shows its call site as `← file:line`, and the inline button opens it.
+- A file that the change moved code into diffs against the code it came from, so the diff shows
+  only what changed. The "Moved code" node lists every move with its counts.
 - `Alt+O` opens the real file at the cursor of a diff.
 - A comment on any line writes a finding to `<name>.brief-findings.md`. The findings show as
   comment threads on their lines and in the Findings node of the view.

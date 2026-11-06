@@ -173,6 +173,13 @@ python3 $B hunks --base "$MB" --head "$HEAD_SHA" > <scratchpad>/brief-<name>-hun
 Each hunk has an id, a file, its first changed line, its counts, and the enclosing function that
 git detected. Check the enclosing function by reading the code when it is blank or looks wrong.
 
+**Moved code.** When the diff deletes a file and adds files that hold its code, `brief.py` diffs each
+added file against the code it came from, not against nothing. A hunk then holds only an edit, new
+code or removed code, and its `origin` names the source line, such as `filler.rs:1234`. The hunks of
+a deleted file show only the code that no added file took. `scripts/moves.py` does the matching. The
+model lists every move under `moves`, and the extension shows them in a "Moved code" node. Moves
+from a file that still exists are not detected.
+
 **Find the paths.** Read the changed functions whole. An entry point is an outermost public way
 into the changed code: a program instruction handler, an exported SDK function, a CLI
 command, an HTTP route, a binary's `main`. A test is not an entry point. A path runs from an entry

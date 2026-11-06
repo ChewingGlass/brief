@@ -8,10 +8,20 @@ function gitApi() {
   return vscode.extensions.getExtension("vscode.git").exports.getAPI(1);
 }
 
-async function openDiff({ file, base, line, status }) {
+// A moved file diffs against built files: `original` holds the code an added file came from, and
+// `modified` holds the part of a deleted file that some added file took.
+async function openDiff({ file, base, line, status, original: originalPath, modified: modifiedPath }) {
   const uri = vscode.Uri.file(file);
   const row = Math.max(line - 1, 0);
   const selection = new vscode.Range(row, 0, row, 0);
+
+  if (originalPath || modifiedPath) {
+    const left = originalPath ? vscode.Uri.file(originalPath) : gitApi().toGitUri(uri, base);
+    const right = modifiedPath ? vscode.Uri.file(modifiedPath) : uri;
+    const title = `${vscode.workspace.asRelativePath(uri)} (${modifiedPath ? "removed, not moved" : "moved, with changes"})`;
+    await vscode.commands.executeCommand("vscode.diff", left, right, title, { selection, preview: true });
+    return;
+  }
 
   if (status === "A") {
     await vscode.window.showTextDocument(uri, { selection, preview: true });
@@ -64,13 +74,43 @@ class Brief {
     return this.model.statuses[file] || "M";
   }
 
+  moveOf(file) {
+    return (this.model.moves || {})[file];
+  }
+
   target(hunk) {
+    return this.fileTarget(hunk.file, hunk.line);
+  }
+
+  fileTarget(file, line) {
+    const move = this.moveOf(file);
     return {
-      file: path.join(this.model.root, hunk.file),
+      file: path.join(this.model.root, file),
       base: this.model.base,
-      line: hunk.line,
-      status: this.status(hunk.file),
+      line,
+      status: this.status(file),
+      original: move && move.role === "target" ? move.original : undefined,
+      modified: move && move.role === "source" ? move.modified : undefined,
     };
+  }
+
+  // The repo file and diff side that an editor shows, including the built files of a move.
+  fileAndSide(uri) {
+    if (uri.scheme === "git") {
+      return { file: path.relative(this.model.root, JSON.parse(uri.query).path), base: true };
+    }
+
+    for (const [file, move] of Object.entries(this.model.moves || {})) {
+      if (uri.fsPath === move.original) {
+        return { file, base: move.role === "target" };
+      }
+
+      if (uri.fsPath === move.modified) {
+        return { file, base: false };
+      }
+    }
+
+    return { file: path.relative(this.model.root, uri.fsPath), base: false };
   }
 
   readingOrder() {
@@ -91,8 +131,7 @@ class Brief {
   }
 
   hunkAt(uri, line) {
-    const base = uri.scheme === "git";
-    const file = base ? path.relative(this.model.root, JSON.parse(uri.query).path) : path.relative(this.model.root, uri.fsPath);
+    const { file, base } = this.fileAndSide(uri);
     const hunks = this.order.filter((hunk) => hunk.file === file);
     const start = (hunk) => (base ? hunk.old_start : hunk.new_start);
     const length = (hunk) => (base ? hunk.old_len : hunk.new_len);
@@ -127,6 +166,13 @@ class Brief {
     return files.map((file) => {
       const uri = vscode.Uri.file(path.join(this.model.root, file));
       const status = statuses[file] || "M";
+      const move = base === this.model.base ? this.moveOf(file) : undefined;
+      if (move) {
+        const original = move.role === "target" ? vscode.Uri.file(move.original) : git.toGitUri(uri, base);
+        const modified = move.role === "source" ? vscode.Uri.file(move.modified) : uri;
+        return [uri, original, modified];
+      }
+
       const original = status === "A" ? undefined : git.toGitUri(uri, base);
       const modified = status === "D" ? undefined : uri;
       return [uri, original, modified];
@@ -149,8 +195,9 @@ function counts(hunks) {
 
 function hunkNode(hunk) {
   const node = new Node(`${path.basename(hunk.file)}:${hunk.line}`, false);
-  node.description = `${counts([hunk])} ${hunk.enclosing}`;
-  node.tooltip = `${hunk.file}:${hunk.line}`;
+  const origin = hunk.origin ? ` · from ${path.basename(hunk.origin)}` : "";
+  node.description = `${counts([hunk])}${origin} ${hunk.enclosing}`;
+  node.tooltip = hunk.origin ? `${hunk.file}:${hunk.line}\nmoved from ${hunk.origin}` : `${hunk.file}:${hunk.line}`;
   node.iconPath = new vscode.ThemeIcon("diff");
   node.command = { command: "brief.openHunk", title: "Open", arguments: [hunk] };
   node.hunk = hunk;
@@ -170,18 +217,25 @@ function stepNode(brief, step) {
     tooltip.appendMarkdown(step.note);
   }
 
+  const calledAt = step.via ? `← ${path.basename(step.via.file)}:${step.via.line} · ` : "";
+  if (step.via) {
+    node.contextValue = "briefStepWithCallSite";
+    node.callSite = step.via;
+  }
+
   if (step.same_as) {
-    node.description = `shown under ${step.same_as}`;
+    node.description = `${calledAt}shown under ${step.same_as}`;
     node.iconPath = new vscode.ThemeIcon("arrow-up");
   } else if (hunks.length) {
     const flagged = brief.findingsIn(hunks);
-    node.description = `${path.basename(hunks[0].file)} ${counts(hunks)}${flagged.length ? ` ⚠ ${flagged.join(" ")}` : ""}`;
+    const moved = brief.moveOf(hunks[0].file) ? " moved" : "";
+    node.description = `${calledAt}${path.basename(hunks[0].file)}${moved} ${counts(hunks)}${flagged.length ? ` ⚠ ${flagged.join(" ")}` : ""}`;
     node.iconPath = new vscode.ThemeIcon("symbol-function");
     node.command = { command: "brief.openHunk", title: "Open", arguments: [hunks[0]] };
     node.hunk = hunks[0];
   } else {
     const row = Math.max(step.line - 1, 0);
-    node.description = `${path.basename(step.file)}:${step.line} unchanged`;
+    node.description = `${calledAt}${path.basename(step.file)}:${step.line} unchanged`;
     node.iconPath = new vscode.ThemeIcon("circle-outline");
     node.command = {
       command: "vscode.open",
@@ -194,10 +248,20 @@ function stepNode(brief, step) {
   return node;
 }
 
+function moveLabel(move) {
+  if (!move) {
+    return "";
+  }
+
+  const others = move.role === "target" ? move.from : move.to;
+  const names = others.map((other) => path.basename(other.file)).join(", ");
+  return move.role === "target" ? ` · ${move.moved} lines moved from ${names}` : ` · ${move.moved} lines moved to ${names}`;
+}
+
 function fileNode(brief, group) {
   const node = new Node(group.file, true, group.hunks.map(hunkNode));
   const flagged = brief.findingsIn(group.hunks);
-  node.description = `${counts(group.hunks)}${flagged.length ? ` ⚠ ${flagged.join(" ")}` : ""}`;
+  node.description = `${counts(group.hunks)}${moveLabel(brief.moveOf(group.file))}${flagged.length ? ` ⚠ ${flagged.join(" ")}` : ""}`;
   node.resourceUri = vscode.Uri.file(path.join(brief.model.root, group.file));
   return node;
 }
@@ -217,6 +281,32 @@ function nestSteps(brief, steps) {
   }
 
   return top;
+}
+
+// Each moved file with its counts. A file with no changes beyond the move has no hunks, so this is
+// the only place it shows.
+function movesNode(brief) {
+  const moves = Object.entries(brief.model.moves || {});
+  if (!moves.length) {
+    return [];
+  }
+
+  const rows = moves
+    .sort(([a, x], [b, y]) => (x.role === y.role ? a.localeCompare(b) : x.role === "target" ? -1 : 1))
+    .map(([file, move]) => {
+      const node = new Node(file, false);
+      const changed = move.role === "target" ? `+${move.added} −${move.deleted} changed` : `−${move.deleted} removed`;
+      node.description = `${changed}${moveLabel(move)}`;
+      node.iconPath = new vscode.ThemeIcon(move.added + move.deleted ? (move.role === "target" ? "diff-added" : "diff-removed") : "pass");
+      node.resourceUri = vscode.Uri.file(path.join(brief.model.root, file));
+      node.command = { command: "brief.openMoved", title: "Open", arguments: [file] };
+      return node;
+    });
+  const moved = moves.filter(([, move]) => move.role === "target").reduce((sum, [, move]) => sum + move.moved, 0);
+  const node = new Node("Moved code", true, rows);
+  node.description = `${moved} lines moved; diffs show only what changed`;
+  node.iconPath = new vscode.ThemeIcon("arrow-swap");
+  return [node];
 }
 
 function roundNodes(brief) {
@@ -260,7 +350,7 @@ function buildTree(brief) {
     })
     .filter(Boolean);
 
-  return [...roundNodes(brief), findingsNode(brief), ...paths, ...rest];
+  return [...roundNodes(brief), findingsNode(brief), ...paths, ...movesNode(brief), ...rest];
 }
 
 class TreeProvider {
@@ -734,12 +824,15 @@ function followNoteClicks(callSites, nav) {
   });
 }
 
-// Selects the tree node of the hunk under the cursor, in the multi-file diff or any diff.
+// Selects the tree node of the hunk under the cursor, in the multi-file diff or any diff. Only a
+// cursor the reader moves counts. A selection set by opening an editor would pull the tree away
+// from the row that opened it.
 function followCursor(getBrief, provider, view, onHunk) {
   let shown;
   return vscode.window.onDidChangeTextEditorSelection(async (event) => {
     const brief = getBrief();
-    if (!brief || !view.visible) {
+    const byHand = event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard;
+    if (!brief || !view.visible || !byHand) {
       return;
     }
 
@@ -787,6 +880,16 @@ class Navigator {
     await openChanges(node.section.heading, this.brief.changes(hunks));
   }
 
+  // Opens the move without selecting a hunk row, so the tree stays on the "Moved code" node.
+  async openMoved(file) {
+    const first = this.brief.order.find((hunk) => hunk.file === file);
+    if (first) {
+      this.position = this.brief.order.indexOf(first);
+    }
+
+    return openDiff(this.brief.fileTarget(file, first ? first.line : 1));
+  }
+
   async openHunk(hunk) {
     this.position = this.brief.order.indexOf(hunk);
     await openDiff(this.brief.target(hunk));
@@ -805,9 +908,8 @@ class Navigator {
     }
 
     const file = path.join(model.root, target.file);
-    const status = model.statuses[target.file];
-    if (status) {
-      return openDiff({ file, base: model.base, line: target.line, status });
+    if (model.statuses[target.file]) {
+      return openDiff(this.brief.fileTarget(target.file, target.line));
     }
 
     return vscode.window.showTextDocument(vscode.Uri.file(file), { selection: lineRange(target.line), preview: true });
@@ -873,6 +975,8 @@ function activate(context) {
     "brief.openPath": (node) => nav.openPath(node),
     "brief.openHunk": (hunk) => nav.openHunk(hunk),
     "brief.openTarget": (target) => nav.openTarget(target),
+    "brief.openCallSite": (node) => nav.openTarget(node.callSite),
+    "brief.openMoved": (file) => nav.openMoved(file),
     "brief.next": () => nav.move(1),
     "brief.previous": () => nav.move(-1),
     "brief.openFileAtCursor": openFileAtCursor,

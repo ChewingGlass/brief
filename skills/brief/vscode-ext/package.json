@@ -2,7 +2,7 @@
   "name": "brief",
   "displayName": "Brief",
   "description": "Shows a PR brief as a tree of call paths, and opens the change as one multi-file diff in call order.",
-  "version": "0.4.0",
+  "version": "0.5.1",
   "publisher": "chewingglass",
   "license": "MIT",
   "engines": {
@@ -72,6 +72,15 @@
       {
         "command": "brief.openSinceFile",
         "title": "Open changes since the last round"
+      },
+      {
+        "command": "brief.openCallSite",
+        "title": "Go to call site",
+        "icon": "$(call-incoming)"
+      },
+      {
+        "command": "brief.openMoved",
+        "title": "Open moved file"
       }
     ],
     "menus": {
@@ -97,6 +106,11 @@
           "command": "brief.openPath",
           "when": "view == brief.view && viewItem == briefPath",
           "group": "inline"
+        },
+        {
+          "command": "brief.openCallSite",
+          "when": "view == brief.view && viewItem == briefStepWithCallSite",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -110,6 +124,14 @@
         },
         {
           "command": "brief.openSinceFile",
+          "when": "false"
+        },
+        {
+          "command": "brief.openCallSite",
+          "when": "false"
+        },
+        {
+          "command": "brief.openMoved",
           "when": "false"
         }
       ],
